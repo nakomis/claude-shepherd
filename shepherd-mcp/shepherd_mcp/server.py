@@ -14,9 +14,10 @@ from mcp.server.fastmcp import FastMCP
 
 from .jobs import store, JobStatus
 from .providers.ollama import OllamaProvider
-from . import worktree, compile, faq, drone_log
+from . import worktree, compile, faq, drone_log, faq_tools
 
 mcp = FastMCP("shepherd-mcp")
+faq_tools.register(mcp)
 
 MAX_CORRECTION_ROUNDS = 3
 

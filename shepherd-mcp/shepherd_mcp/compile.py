@@ -1,6 +1,8 @@
 """Compile gate — runs type-checking / build in the worktree to catch errors cheaply."""
 
+import os
 import subprocess
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -53,11 +55,28 @@ def _tsc(worktree_path: str) -> CompileResult:
 
 def _pycompile(worktree_path: str) -> CompileResult:
     result = subprocess.run(
-        ["python3", "-m", "pyflakes", worktree_path],
+        [sys.executable, "-m", "pyflakes", worktree_path],
         capture_output=True,
         text=True,
     )
     output = (result.stdout + result.stderr).strip()
     if result.returncode != 0:
         return CompileResult(success=False, output=output)
+
+    # Run pytest if a tests/ directory or conftest.py is present
+    root = Path(worktree_path)
+    if (root / "tests").is_dir() or (root / "conftest.py").exists():
+        env = {**os.environ, "PYTHONPATH": worktree_path}
+        pytest_result = subprocess.run(
+            [sys.executable, "-m", "pytest", worktree_path, "--tb=short", "-q", "--no-header"],
+            capture_output=True,
+            text=True,
+            env=env,
+        )
+        pytest_output = (pytest_result.stdout + pytest_result.stderr).strip()
+        # Exit code 5 = no tests collected — treat as success
+        if pytest_result.returncode not in (0, 5):
+            return CompileResult(success=False, output=pytest_output)
+        return CompileResult(success=True, output=f"{output or 'pyflakes: OK'}\npytest: OK")
+
     return CompileResult(success=True, output=output or "pyflakes: OK")

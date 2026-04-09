@@ -19,7 +19,7 @@ def create(project_path: str, branch: str) -> str:
 
 
 def remove(project_path: str, worktree_path: str) -> None:
-    """Remove a git worktree and delete its branch."""
+    """Remove a git worktree (force) without deleting its branch."""
     _run(["git", "worktree", "remove", "--force", worktree_path], cwd=project_path)
 
 

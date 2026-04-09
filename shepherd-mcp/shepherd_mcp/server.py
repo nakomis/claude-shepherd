@@ -14,11 +14,12 @@ from mcp.server.fastmcp import FastMCP
 
 from .jobs import store, JobStatus
 from .providers.ollama import OllamaProvider
-from . import worktree, compile, faq, drone_log, faq_tools, spec_library, spec_library_tools
+from . import worktree, compile, faq, drone_log, faq_tools, spec_library, spec_library_tools, failure_archive, failure_archive_tools
 
 mcp = FastMCP("shepherd-mcp")
 faq_tools.register(mcp)
 spec_library_tools.register(mcp)
+failure_archive_tools.register(mcp)
 
 MAX_CORRECTION_ROUNDS = 3
 
@@ -46,6 +47,24 @@ def _resolve_provider(model: str):
     return provider, model_name
 
 
+def _archive_failure(job) -> None:
+    """Write a failed job to the failure archive (best-effort; never raises)."""
+    try:
+        failure_archive.log_failure(
+            project_path=job.project_path,
+            job_id=job.job_id,
+            model=job.model,
+            spec=job.spec,
+            failure_reason=job.failure_reason or "",
+            errors=job.errors or [],
+            correction_rounds=job.correction_rounds,
+            prompt_tokens=job.prompt_tokens,
+            completion_tokens=job.completion_tokens,
+        )
+    except Exception:
+        pass  # archiving must never crash the pipeline
+
+
 def _run_pipeline(job_id: str) -> None:
     """
     Background thread: generate → compile → correct loop → mark ready/failed.
@@ -62,6 +81,7 @@ def _run_pipeline(job_id: str) -> None:
             job.failure_reason = f"Unexpected pipeline error: {exc}"
             drone_log.append(job_id, "pipeline_crash", error=str(exc),
                              traceback=traceback.format_exc())
+            _archive_failure(job)
         except Exception:
             pass  # store gone (server restart race) — nothing to do
 
@@ -114,6 +134,7 @@ def _run_pipeline_inner(job_id: str) -> None:
             job.status = JobStatus.FAILED
             job.failure_reason = f"Provider error: {exc}"
             drone_log.append(job_id, "provider_error", error=str(exc))
+            _archive_failure(job)
             return
 
         job.prompt_tokens += result.prompt_tokens
@@ -130,6 +151,7 @@ def _run_pipeline_inner(job_id: str) -> None:
             job.status = JobStatus.FAILED
             job.failure_reason = "Drone response contained no parseable files or patches."
             drone_log.append(job_id, "parse_failed", response=result.response)
+            _archive_failure(job)
             return
 
         job.files = files
@@ -152,6 +174,7 @@ def _run_pipeline_inner(job_id: str) -> None:
                     if round_num >= MAX_CORRECTION_ROUNDS:
                         job.status = JobStatus.FAILED
                         job.failure_reason = patch_error
+                        _archive_failure(job)
                         return
                     job.errors = [patch_error]
                     prompt = (
@@ -203,6 +226,7 @@ def _run_pipeline_inner(job_id: str) -> None:
     drone_log.append(job_id, "pipeline_failed", reason=job.failure_reason,
                      total_prompt_tokens=job.prompt_tokens,
                      total_completion_tokens=job.completion_tokens)
+    _archive_failure(job)
 
 
 def _parse_response(response: str) -> tuple[dict[str, str], list[tuple[str, str, str]]]:

@@ -14,10 +14,11 @@ from mcp.server.fastmcp import FastMCP
 
 from .jobs import store, JobStatus
 from .providers.ollama import OllamaProvider
-from . import worktree, compile, faq, drone_log, faq_tools
+from . import worktree, compile, faq, drone_log, faq_tools, spec_library, spec_library_tools
 
 mcp = FastMCP("shepherd-mcp")
 faq_tools.register(mcp)
+spec_library_tools.register(mcp)
 
 MAX_CORRECTION_ROUNDS = 3
 
@@ -64,9 +65,12 @@ def _run_pipeline(job_id: str) -> None:
         "Do not include explanations outside of code comments."
     )
 
+    fragments = spec_library.fragments_for_prompt(job.project_path)
     prompt = job.spec
+    if fragments:
+        prompt = f"{fragments}\n{prompt}"
     if job.feedback:
-        prompt = f"{job.spec}\n\n# Reviewer feedback\n\n{job.feedback}"
+        prompt = f"{prompt}\n\n# Reviewer feedback\n\n{job.feedback}"
 
     drone_log.append(job_id, "pipeline_start",
                      model=job.model, project_path=job.project_path,

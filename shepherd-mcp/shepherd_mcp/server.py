@@ -14,10 +14,12 @@ from mcp.server.fastmcp import FastMCP
 
 from .jobs import store, JobStatus
 from .providers.ollama import OllamaProvider
-from . import worktree, compile, faq, drone_log, faq_tools
+from . import worktree, compile, faq, drone_log, faq_tools, spec_library, spec_library_tools, failure_archive, failure_archive_tools
 
 mcp = FastMCP("shepherd-mcp")
 faq_tools.register(mcp)
+spec_library_tools.register(mcp)
+failure_archive_tools.register(mcp)
 
 MAX_CORRECTION_ROUNDS = 3
 
@@ -45,28 +47,83 @@ def _resolve_provider(model: str):
     return provider, model_name
 
 
+def _archive_failure(job) -> None:
+    """Write a failed job to the failure archive (best-effort; never raises)."""
+    try:
+        failure_archive.log_failure(
+            project_path=job.project_path,
+            job_id=job.job_id,
+            model=job.model,
+            spec=job.spec,
+            failure_reason=job.failure_reason or "",
+            errors=job.errors or [],
+            correction_rounds=job.correction_rounds,
+            prompt_tokens=job.prompt_tokens,
+            completion_tokens=job.completion_tokens,
+        )
+    except Exception:
+        pass  # archiving must never crash the pipeline
+
+
 def _run_pipeline(job_id: str) -> None:
     """
     Background thread: generate → compile → correct loop → mark ready/failed.
     Claude polls via drone_status / drone_result and is not involved until the
     job reaches 'ready' or 'failed'.
     """
+    try:
+        _run_pipeline_inner(job_id)
+    except Exception as exc:
+        import traceback
+        try:
+            job = store.get(job_id)
+            job.status = JobStatus.FAILED
+            job.failure_reason = f"Unexpected pipeline error: {exc}"
+            drone_log.append(job_id, "pipeline_crash", error=str(exc),
+                             traceback=traceback.format_exc())
+            _archive_failure(job)
+        except Exception:
+            pass  # store gone (server restart race) — nothing to do
+
+
+def _is_qwen3(model_name: str) -> bool:
+    """Return True if the model is a Qwen3 variant that needs /no_think."""
+    lower = model_name.lower()
+    return lower.startswith("qwen3") or "qwen3-" in lower
+
+
+def _run_pipeline_inner(job_id: str) -> None:
     job = store.get(job_id)
     provider, model_name = _resolve_provider(job.model)
 
+    no_think_prefix = "/no_think\n\n" if _is_qwen3(model_name) else ""
     system = faq.system_prompt(
-        "You are a code generation assistant. Output only valid source code files. "
-        "For each file, use the format:\n\n"
+        no_think_prefix +
+        "You are a code generation assistant. Output only valid source code files or patches.\n\n"
+        "For a NEW file or COMPLETE replacement, use:\n"
         "### FILE: <relative/path/to/file.ext>\n"
         "```\n"
-        "<file content>\n"
+        "<full file content>\n"
         "```\n\n"
-        "Do not include explanations outside of code comments."
+        "For a MODIFICATION to an existing file, use FIND/REPLACE format — no line numbers needed:\n"
+        "### PATCH: <relative/path/to/file.ext>\n"
+        "```\n"
+        "FIND:\n"
+        "<exact lines to find, copied verbatim from the file>\n"
+        "REPLACE:\n"
+        "<exact lines to replace them with>\n"
+        "```\n\n"
+        "You may include multiple FIND:/REPLACE: pairs in one PATCH block for multiple changes.\n"
+        "Do not include explanations outside of code comments. "
+        "Never output a complete file when a patch is sufficient."
     )
 
+    fragments = spec_library.fragments_for_prompt(job.project_path)
     prompt = job.spec
+    if fragments:
+        prompt = f"{fragments}\n{prompt}"
     if job.feedback:
-        prompt = f"{job.spec}\n\n# Reviewer feedback\n\n{job.feedback}"
+        prompt = f"{prompt}\n\n# Reviewer feedback\n\n{job.feedback}"
 
     drone_log.append(job_id, "pipeline_start",
                      model=job.model, project_path=job.project_path,
@@ -85,6 +142,7 @@ def _run_pipeline(job_id: str) -> None:
             job.status = JobStatus.FAILED
             job.failure_reason = f"Provider error: {exc}"
             drone_log.append(job_id, "provider_error", error=str(exc))
+            _archive_failure(job)
             return
 
         job.prompt_tokens += result.prompt_tokens
@@ -95,21 +153,46 @@ def _run_pipeline(job_id: str) -> None:
                          completion_tokens=result.completion_tokens,
                          response=result.response)
 
-        # Parse files from response
-        files = _parse_files(result.response)
-        if not files:
+        # Parse files and patches from response
+        files, patches = _parse_response(result.response)
+        if not files and not patches:
             job.status = JobStatus.FAILED
-            job.failure_reason = "Drone response contained no parseable files."
+            job.failure_reason = "Drone response contained no parseable files or patches."
             drone_log.append(job_id, "parse_failed", response=result.response)
+            _archive_failure(job)
             return
 
         job.files = files
-        drone_log.append(job_id, "files_parsed", files=list(files.keys()))
+        drone_log.append(job_id, "files_parsed",
+                         files=list(files.keys()), patches=len(patches))
 
         # Write to worktree, commit, and compile
         if job.worktree_path:
             commit_msg = f"shepherd: drone generation (round {round_num + 1})"
-            worktree.write_and_commit(job.worktree_path, files, commit_msg)
+            if files:
+                worktree.write_and_commit(job.worktree_path, files, commit_msg)
+            if patches:
+                try:
+                    worktree.apply_patches(job.worktree_path, patches)
+                    _run_git_commit(job.worktree_path, commit_msg)
+                except RuntimeError as exc:
+                    # git apply failed — treat as a compile error so the drone can correct
+                    patch_error = f"git apply failed: {exc}"
+                    drone_log.append(job_id, "patch_failed", round=round_num, error=patch_error)
+                    if round_num >= MAX_CORRECTION_ROUNDS:
+                        job.status = JobStatus.FAILED
+                        job.failure_reason = patch_error
+                        _archive_failure(job)
+                        return
+                    job.errors = [patch_error]
+                    prompt = (
+                        f"{prompt}\n\n"
+                        f"# Patch application error (round {round_num + 1})\n\n"
+                        f"```\n{patch_error}\n```\n\n"
+                        "The patch could not be applied. Output a corrected PATCH block using FIND:/REPLACE: format. "
+                        "Copy the FIND: text exactly as it appears in the file — do not paraphrase."
+                    )
+                    continue
             job.status = JobStatus.COMPILING
             compile_result = compile.run(job.worktree_path)
 
@@ -151,30 +234,58 @@ def _run_pipeline(job_id: str) -> None:
     drone_log.append(job_id, "pipeline_failed", reason=job.failure_reason,
                      total_prompt_tokens=job.prompt_tokens,
                      total_completion_tokens=job.completion_tokens)
+    _archive_failure(job)
 
 
-def _parse_files(response: str) -> dict[str, str]:
+def _parse_response(response: str) -> tuple[dict[str, str], list[tuple[str, str, str]]]:
     """
-    Parse the drone's response into a dict of {relative_path: content}.
+    Parse the drone's response into full files and FIND/REPLACE patches.
 
-    Accepts two header formats:
-        ### FILE: path/to/file.ext    (preferred)
-        ### path/to/file.ext          (also accepted — drones often omit "FILE:")
+    Recognised header formats:
+        ### FILE: path/to/file.ext    — full file (new or replacement)
+        ### PATCH: path/to/file.ext   — FIND:/REPLACE: block, no line numbers needed
+        ### path/to/file.ext          — treated as FILE (legacy, drones often omit the keyword)
 
-    Both must be followed by a fenced code block.
+    Returns (files, patches) where:
+        files   = {relative_path: full_content}
+        patches = [(relative_path, find_text, replace_text), ...]
     """
     import re
     files: dict[str, str] = {}
-    # Match both "### FILE: path" and "### path" (where path contains a '/' or '.')
-    pattern = re.compile(
-        r"###\s*(?:FILE:\s*)?([^\n]+?\.[^\n]+?)\n```(?:\w+)?\n(.*?)```",
-        re.DOTALL,
+    patches: list[tuple[str, str, str]] = []
+    BLOCK = r"```[^\n]*\n(.*?)```"
+
+    # PATCH blocks — parse FIND:/REPLACE: pairs from each block
+    patch_spans: set[tuple[int, int]] = set()
+    pair_re = re.compile(
+        r"^FIND:\n(.*?)^REPLACE:\n(.*?)(?=^FIND:|\Z)",
+        re.MULTILINE | re.DOTALL,
     )
-    for match in pattern.finditer(response):
-        path = match.group(1).strip()
-        content = match.group(2)
-        files[path] = content
-    return files
+    for m in re.finditer(r"###\s*PATCH:\s*([^\n]+)\n" + BLOCK, response, re.DOTALL):
+        path = m.group(1).strip()
+        block = m.group(2)
+        patch_spans.add((m.start(), m.end()))
+        for pair in pair_re.finditer(block):
+            find_text = pair.group(1).rstrip("\n")
+            replace_text = pair.group(2).rstrip("\n")
+            patches.append((path, find_text, replace_text))
+
+    # FILE blocks — keyword optional (legacy drones omit it); skip any PATCH span
+    for m in re.finditer(r"###\s*(?:FILE:\s*)?([^\n]+?\.[^\n]+?)\n" + BLOCK, response, re.DOTALL):
+        if any(m.start() >= s and m.end() <= e for s, e in patch_spans):
+            continue
+        path = m.group(1).strip()
+        files[path] = m.group(2)
+    return files, patches
+
+
+def _run_git_commit(worktree_path: str, message: str) -> None:
+    """Stage all changes and commit in the worktree (used after patch application)."""
+    import subprocess
+    for cmd in (["git", "add", "-A"], ["git", "commit", "-m", message]):
+        r = subprocess.run(cmd, cwd=worktree_path, capture_output=True, text=True)
+        if r.returncode != 0:
+            raise RuntimeError(f"{cmd} failed:\n{r.stderr}")
 
 
 # ── MCP Tools ────────────────────────────────────────────────────────────────
@@ -231,6 +342,32 @@ def drone_status(job_id: str) -> str:
 
 
 @mcp.tool()
+def drone_wait(job_id: str, timeout: int = 1800) -> str:
+    """
+    Block until a drone job reaches 'ready' or 'failed', then return its status.
+
+    Replaces repeated drone_status polling with a single call.
+    Times out after `timeout` seconds (default 600 = 10 minutes).
+
+    Args:
+        job_id:  Job to wait for.
+        timeout: Maximum seconds to wait before returning 'timeout'.
+    """
+    import time
+    try:
+        job = store.get(job_id)
+    except KeyError:
+        return "error: unknown job_id"
+
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if job.status in (JobStatus.READY, JobStatus.FAILED):
+            return job.status.value
+        time.sleep(3)
+    return f"timeout after {timeout}s (current status: {job.status.value})"
+
+
+@mcp.tool()
 def drone_result(job_id: str) -> str:
     """
     Get the full result of a completed drone job.
@@ -246,6 +383,9 @@ def drone_result(job_id: str) -> str:
     return json.dumps({
         "status": job.status.value,
         "files": list(job.files.keys()),
+        "worktree_path": job.worktree_path,
+        "branch": job.branch,
+        "spec": job.spec,
         "errors": job.errors,
         "failure_reason": job.failure_reason,
         "correction_rounds": job.correction_rounds,

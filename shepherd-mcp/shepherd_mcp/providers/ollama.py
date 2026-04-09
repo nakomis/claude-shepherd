@@ -4,7 +4,7 @@ import httpx
 from .base import DroneProvider, DroneResult
 
 OLLAMA_BASE = "http://localhost:11434"
-DEFAULT_TIMEOUT = 300  # seconds — local models can be slow
+DEFAULT_TIMEOUT = 900  # seconds — large local models can be slow (15 min)
 
 
 class OllamaProvider(DroneProvider):

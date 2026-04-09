@@ -14,17 +14,25 @@ class CompileResult:
 def run(worktree_path: str) -> CompileResult:
     """
     Detect the project type and run the appropriate compile check.
+    Searches the root and common subdirectories for project files.
 
-    TypeScript (CDK/Node): tsc --noEmit
-    Vite frontend:         vite build (or tsc -b if no vite.config)
-    Python:                py_compile check (basic syntax only)
-
-    Falls back to a no-op success if no recognised project type is detected.
+    TypeScript: tsc --noEmit (run in each directory containing a tsconfig.json)
+    Python:     py_compile syntax check across all .py files
     """
     root = Path(worktree_path)
 
-    if (root / "tsconfig.json").exists():
-        return _tsc(worktree_path)
+    # Find all tsconfig.json files, excluding node_modules
+    tsconfigs = [
+        p.parent for p in root.rglob("tsconfig.json")
+        if "node_modules" not in p.parts
+    ]
+    if tsconfigs:
+        results = [_tsc(str(d)) for d in tsconfigs]
+        failures = [r for r in results if not r.success]
+        if failures:
+            return CompileResult(success=False, output="\n\n".join(r.output for r in failures))
+        outputs = "\n".join(f"{d.relative_to(root)}: OK" for d in tsconfigs)
+        return CompileResult(success=True, output=outputs)
 
     if (root / "pyproject.toml").exists() or (root / "setup.py").exists():
         return _pycompile(worktree_path)

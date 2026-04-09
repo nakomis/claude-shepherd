@@ -1,8 +1,24 @@
 import json
 from typing import List
 
-# Assuming necessary imports are already present
-# from some_module import mcp, store, Job
+class Job:
+    def __init__(self, job_id: str, status: str, model: str, prompt_tokens: int, completion_tokens: int, correction_rounds: int):
+        self.job_id = job_id
+        self.status = status
+        self.model = model
+        self.prompt_tokens = prompt_tokens
+        self.completion_tokens = completion_tokens
+        self.correction_rounds = correction_rounds
+
+class Store:
+    def all(self) -> List[Job]:
+        # Placeholder for actual store implementation
+        return [
+            Job("job1", "completed", "model1", 100, 200, 5),
+            Job("job2", "running", "model2", 150, 300, 3)
+        ]
+
+store = Store()
 
 def drone_list():
     jobs = store.all()
@@ -40,8 +56,4 @@ def drone_cost_summary() -> str:
 
 
 def main():
-    # Main function implementation
-    pass
-
-if __name__ == "__main__":
-    main()
+    mcp.run()

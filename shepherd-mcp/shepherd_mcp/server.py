@@ -52,6 +52,21 @@ def _run_pipeline(job_id: str) -> None:
     Claude polls via drone_status / drone_result and is not involved until the
     job reaches 'ready' or 'failed'.
     """
+    try:
+        _run_pipeline_inner(job_id)
+    except Exception as exc:
+        import traceback
+        try:
+            job = store.get(job_id)
+            job.status = JobStatus.FAILED
+            job.failure_reason = f"Unexpected pipeline error: {exc}"
+            drone_log.append(job_id, "pipeline_crash", error=str(exc),
+                             traceback=traceback.format_exc())
+        except Exception:
+            pass  # store gone (server restart race) — nothing to do
+
+
+def _run_pipeline_inner(job_id: str) -> None:
     job = store.get(job_id)
     provider, model_name = _resolve_provider(job.model)
 
@@ -123,8 +138,26 @@ def _run_pipeline(job_id: str) -> None:
             if files:
                 worktree.write_and_commit(job.worktree_path, files, commit_msg)
             if patches:
-                worktree.apply_patches(job.worktree_path, patches)
-                _run_git_commit(job.worktree_path, commit_msg)
+                try:
+                    worktree.apply_patches(job.worktree_path, patches)
+                    _run_git_commit(job.worktree_path, commit_msg)
+                except RuntimeError as exc:
+                    # git apply failed — treat as a compile error so the drone can correct
+                    patch_error = f"git apply failed: {exc}"
+                    drone_log.append(job_id, "patch_failed", round=round_num, error=patch_error)
+                    if round_num >= MAX_CORRECTION_ROUNDS:
+                        job.status = JobStatus.FAILED
+                        job.failure_reason = patch_error
+                        return
+                    job.errors = [patch_error]
+                    prompt = (
+                        f"{prompt}\n\n"
+                        f"# Patch application error (round {round_num + 1})\n\n"
+                        f"```\n{patch_error}\n```\n\n"
+                        "The patch could not be applied. Output a corrected PATCH with valid unified diff format "
+                        "and enough context lines for `git apply` to locate the hunk."
+                    )
+                    continue
             job.status = JobStatus.COMPILING
             compile_result = compile.run(job.worktree_path)
 

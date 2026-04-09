@@ -91,9 +91,10 @@ def _run_pipeline(job_id: str) -> None:
 
         job.files = files
 
-        # Write to worktree and compile
+        # Write to worktree, commit, and compile
         if job.worktree_path:
-            worktree.write_files(job.worktree_path, files)
+            commit_msg = f"shepherd: drone generation (round {round_num + 1})"
+            worktree.write_and_commit(job.worktree_path, files, commit_msg)
             job.status = JobStatus.COMPILING
             compile_result = compile.run(job.worktree_path)
 

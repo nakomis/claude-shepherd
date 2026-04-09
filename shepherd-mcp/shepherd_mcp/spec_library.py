@@ -1,4 +1,3 @@
-import os
 from pathlib import Path
 
 def _fragments_dir(project_path: str) -> Path:

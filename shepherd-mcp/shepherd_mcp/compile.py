@@ -17,7 +17,7 @@ def run(worktree_path: str) -> CompileResult:
     Searches the root and common subdirectories for project files.
 
     TypeScript: tsc --noEmit (run in each directory containing a tsconfig.json)
-    Python:     py_compile syntax check across all .py files
+    Python:     pyflakes across all .py files (catches undefined names, bad imports, wrong APIs)
     """
     root = Path(worktree_path)
 
@@ -52,17 +52,12 @@ def _tsc(worktree_path: str) -> CompileResult:
 
 
 def _pycompile(worktree_path: str) -> CompileResult:
-    py_files = list(Path(worktree_path).rglob("*.py"))
-    errors = []
-    for f in py_files:
-        result = subprocess.run(
-            ["python3", "-m", "py_compile", str(f)],
-            capture_output=True,
-            text=True,
-        )
-        if result.returncode != 0:
-            errors.append(f"{f.name}: {result.stderr.strip()}")
-
-    if errors:
-        return CompileResult(success=False, output="\n".join(errors))
-    return CompileResult(success=True, output=f"Syntax OK ({len(py_files)} files checked)")
+    result = subprocess.run(
+        ["python3", "-m", "pyflakes", worktree_path],
+        capture_output=True,
+        text=True,
+    )
+    output = (result.stdout + result.stderr).strip()
+    if result.returncode != 0:
+        return CompileResult(success=False, output=output)
+    return CompileResult(success=True, output=output or "pyflakes: OK")

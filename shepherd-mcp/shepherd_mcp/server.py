@@ -56,13 +56,19 @@ def _run_pipeline(job_id: str) -> None:
     provider, model_name = _resolve_provider(job.model)
 
     system = faq.system_prompt(
-        "You are a code generation assistant. Output only valid source code files. "
-        "For each file, use the format:\n\n"
+        "You are a code generation assistant. Output only valid source code files or patches.\n\n"
+        "For a NEW file or COMPLETE replacement, use:\n"
         "### FILE: <relative/path/to/file.ext>\n"
         "```\n"
-        "<file content>\n"
+        "<full file content>\n"
         "```\n\n"
-        "Do not include explanations outside of code comments."
+        "For a MODIFICATION to an existing file, output a unified diff patch:\n"
+        "### PATCH: <relative/path/to/file.ext>\n"
+        "```diff\n"
+        "<unified diff — must include enough context lines for `git apply` to locate the hunk>\n"
+        "```\n\n"
+        "Do not include explanations outside of code comments. "
+        "Never output a complete file when a patch is sufficient."
     )
 
     fragments = spec_library.fragments_for_prompt(job.project_path)
@@ -99,21 +105,26 @@ def _run_pipeline(job_id: str) -> None:
                          completion_tokens=result.completion_tokens,
                          response=result.response)
 
-        # Parse files from response
-        files = _parse_files(result.response)
-        if not files:
+        # Parse files and patches from response
+        files, patches = _parse_response(result.response)
+        if not files and not patches:
             job.status = JobStatus.FAILED
-            job.failure_reason = "Drone response contained no parseable files."
+            job.failure_reason = "Drone response contained no parseable files or patches."
             drone_log.append(job_id, "parse_failed", response=result.response)
             return
 
         job.files = files
-        drone_log.append(job_id, "files_parsed", files=list(files.keys()))
+        drone_log.append(job_id, "files_parsed",
+                         files=list(files.keys()), patches=len(patches))
 
         # Write to worktree, commit, and compile
         if job.worktree_path:
             commit_msg = f"shepherd: drone generation (round {round_num + 1})"
-            worktree.write_and_commit(job.worktree_path, files, commit_msg)
+            if files:
+                worktree.write_and_commit(job.worktree_path, files, commit_msg)
+            if patches:
+                worktree.apply_patches(job.worktree_path, patches)
+                _run_git_commit(job.worktree_path, commit_msg)
             job.status = JobStatus.COMPILING
             compile_result = compile.run(job.worktree_path)
 
@@ -157,28 +168,45 @@ def _run_pipeline(job_id: str) -> None:
                      total_completion_tokens=job.completion_tokens)
 
 
-def _parse_files(response: str) -> dict[str, str]:
+def _parse_response(response: str) -> tuple[dict[str, str], list[str]]:
     """
-    Parse the drone's response into a dict of {relative_path: content}.
+    Parse the drone's response into full files and unified diff patches.
 
-    Accepts two header formats:
-        ### FILE: path/to/file.ext    (preferred)
-        ### path/to/file.ext          (also accepted — drones often omit "FILE:")
+    Recognised header formats:
+        ### FILE: path/to/file.ext    — full file (new or replacement)
+        ### PATCH: path/to/file.ext   — unified diff, applied via `git apply`
+        ### path/to/file.ext          — treated as FILE (legacy, drones often omit the keyword)
 
     Both must be followed by a fenced code block.
+    Returns (files, patches) where:
+        files   = {relative_path: full_content}
+        patches = [raw_unified_diff_string, ...]
     """
     import re
     files: dict[str, str] = {}
-    # Match both "### FILE: path" and "### path" (where path contains a '/' or '.')
+    patches: list[str] = []
     pattern = re.compile(
-        r"###\s*(?:FILE:\s*)?([^\n]+?\.[^\n]+?)\n```(?:\w+)?\n(.*?)```",
+        r"###\s*(PATCH|FILE)?:?\s*([^\n]+?\.[^\n]+?)\n```(?:\w+)?\n(.*?)```",
         re.DOTALL,
     )
     for match in pattern.finditer(response):
-        path = match.group(1).strip()
-        content = match.group(2)
-        files[path] = content
-    return files
+        kind = (match.group(1) or "FILE").upper()
+        path = match.group(2).strip()
+        content = match.group(3)
+        if kind == "PATCH":
+            patches.append(content)
+        else:
+            files[path] = content
+    return files, patches
+
+
+def _run_git_commit(worktree_path: str, message: str) -> None:
+    """Stage all changes and commit in the worktree (used after patch application)."""
+    import subprocess
+    for cmd in (["git", "add", "-A"], ["git", "commit", "-m", message]):
+        r = subprocess.run(cmd, cwd=worktree_path, capture_output=True, text=True)
+        if r.returncode != 0:
+            raise RuntimeError(f"{cmd} failed:\n{r.stderr}")
 
 
 # ── MCP Tools ────────────────────────────────────────────────────────────────

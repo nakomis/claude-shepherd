@@ -44,6 +44,20 @@ def write_and_commit(worktree_path: str, files: dict[str, str], message: str) ->
     _run(["git", "commit", "-m", message], cwd=worktree_path)
 
 
+def apply_patches(worktree_path: str, patches: list[str]) -> None:
+    """Apply a list of unified diff patches to the worktree via `git apply`."""
+    import tempfile, os
+    for patch_text in patches:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".patch",
+                                        delete=False, encoding="utf-8") as f:
+            f.write(patch_text)
+            tmp = f.name
+        try:
+            _run(["git", "apply", "--index", tmp], cwd=worktree_path)
+        finally:
+            os.unlink(tmp)
+
+
 def _run(cmd: list[str], cwd: str) -> subprocess.CompletedProcess:
     result = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True)
     if result.returncode != 0:

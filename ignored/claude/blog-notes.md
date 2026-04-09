@@ -51,8 +51,26 @@ Running log of things worth writing up. Add to this as the session progresses.
 
 ---
 
+## Lessons from dogfooding (Tier 2) — patch mode
+
+- **Unified diffs are the wrong format for LLMs** — every model tested (qwen2.5-coder:14b, gemma4:26b) hallucinated the `@@ -N,M @@` line numbers, even when given the full file with numbered lines. `git apply` has zero tolerance for off-by-one offsets. Three rounds of correction, still failing.
+
+- **FIND/REPLACE format solves it entirely** — no line numbers needed. The pipeline does a literal string search-and-replace. LLMs are good at copying exact strings verbatim; they are bad at computing file offsets. Gemma 4 nailed the first job in zero correction rounds once switched to FIND/REPLACE.
+
+- **`git apply --3way` doesn't work in fresh shepherd worktrees** — requires the pre-image blob to exist in git object storage. New worktree branches don't have it. Wasted a session discovering this.
+
+- **Silent thread death is a real failure mode** — if any exception occurs in the pipeline thread *after* `provider.generate()` returns (e.g. patch application raises `RuntimeError`), Python daemon threads die silently and the job status freezes at "generating" forever. Fix: wrap the entire pipeline in a top-level try/except that marks the job failed with a traceback.
+
+- **`drone_wait` eliminates polling loops** — a single blocking tool call replaced dozens of rapid `drone_status` polls. Should have been built on day one.
+
+- **Ollama VRAM contention is real** — conversation-memory embeds (`mxbai-embed-large`) run on every message exchange. With a 17 GB model like gemma4:26b, there's only ~6 GB headroom on a 24 GB M5 Pro. Ollama serialises inference requests even when both models are loaded; drone jobs queue behind embed requests. Timeout the HTTP call (we use 900s) and monitor `~/.ollama/logs/server.log` for `/api/generate` entries — if they're absent, Ollama never received the request.
+
+- **pyflakes catches drone API errors that py_compile misses** — upgraded the Python compile gate. Caught an unused `import os` in drone-generated code on first run. Would have caught `store.values()` vs `store.all()` in Tier 1.
+
 ## Things that worked surprisingly well
 
 - CloudFormation stack outputs as the source of truth for `set-env.sh` — cleaner than filtering by resource name, self-documenting, survives resource renames
 - `continue-update-rollback --resources-to-skip` as a surgical fix for stuck stacks
 - The FAQ seeded from real correction history — not invented rules, actual errors the drone made
+- FIND/REPLACE patch format — obvious in hindsight, but the whole session of unified diff pain was needed to arrive at it
+- `drone_wait` blocking tool — one call, clean, no polling loop contaminating conversation context

@@ -265,6 +265,32 @@ def drone_status(job_id: str) -> str:
 
 
 @mcp.tool()
+def drone_wait(job_id: str, timeout: int = 600) -> str:
+    """
+    Block until a drone job reaches 'ready' or 'failed', then return its status.
+
+    Replaces repeated drone_status polling with a single call.
+    Times out after `timeout` seconds (default 600 = 10 minutes).
+
+    Args:
+        job_id:  Job to wait for.
+        timeout: Maximum seconds to wait before returning 'timeout'.
+    """
+    import time
+    try:
+        job = store.get(job_id)
+    except KeyError:
+        return "error: unknown job_id"
+
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if job.status in (JobStatus.READY, JobStatus.FAILED):
+            return job.status.value
+        time.sleep(3)
+    return f"timeout after {timeout}s (current status: {job.status.value})"
+
+
+@mcp.tool()
 def drone_result(job_id: str) -> str:
     """
     Get the full result of a completed drone job.

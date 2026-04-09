@@ -383,6 +383,9 @@ def drone_result(job_id: str) -> str:
     return json.dumps({
         "status": job.status.value,
         "files": list(job.files.keys()),
+        "worktree_path": job.worktree_path,
+        "branch": job.branch,
+        "spec": job.spec,
         "errors": job.errors,
         "failure_reason": job.failure_reason,
         "correction_rounds": job.correction_rounds,

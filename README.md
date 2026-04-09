@@ -2,6 +2,10 @@
 
 A framework for orchestrating drone LLMs (Ollama, Bedrock, OpenAI, Gemini) under Claude's supervision to generate code cheaply, with Claude acting as architect, gatekeeper, and reviewer.
 
+If you find this useful, please consider buying me a coffee:
+
+[![Donate with PayPal](https://www.paypalobjects.com/en_GB/i/btn/btn_donate_SM.gif)](https://www.paypal.com/donate?hosted_button_id=Q3BESC73EWVNN)
+
 ## The idea
 
 Claude is expensive for boilerplate generation but irreplaceable for reasoning. Cheap local or API models (drones) can generate code given a tight enough spec — but they make systematic errors. Claude Shepherd puts Claude in charge of the pipeline: writing specs, running gates, reviewing residual failures, and merging approved output.
@@ -53,3 +57,9 @@ Providers are pluggable per-job — you can mix within a session.
 ## Licence
 
 CC0 — public domain. No rights reserved.
+
+---
+
+If you find this useful, please consider buying me a coffee:
+
+[![Donate with PayPal](https://www.paypalobjects.com/en_GB/i/btn/btn_donate_SM.gif)](https://www.paypal.com/donate?hosted_button_id=Q3BESC73EWVNN)

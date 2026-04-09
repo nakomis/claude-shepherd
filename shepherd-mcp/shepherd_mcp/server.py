@@ -86,11 +86,19 @@ def _run_pipeline(job_id: str) -> None:
             pass  # store gone (server restart race) — nothing to do
 
 
+def _is_qwen3(model_name: str) -> bool:
+    """Return True if the model is a Qwen3 variant that needs /no_think."""
+    lower = model_name.lower()
+    return lower.startswith("qwen3") or "qwen3-" in lower
+
+
 def _run_pipeline_inner(job_id: str) -> None:
     job = store.get(job_id)
     provider, model_name = _resolve_provider(job.model)
 
+    no_think_prefix = "/no_think\n\n" if _is_qwen3(model_name) else ""
     system = faq.system_prompt(
+        no_think_prefix +
         "You are a code generation assistant. Output only valid source code files or patches.\n\n"
         "For a NEW file or COMPLETE replacement, use:\n"
         "### FILE: <relative/path/to/file.ext>\n"

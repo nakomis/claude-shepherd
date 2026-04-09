@@ -53,7 +53,10 @@ def apply_patches(worktree_path: str, patches: list[str]) -> None:
             f.write(patch_text)
             tmp = f.name
         try:
-            _run(["git", "apply", "--index", tmp], cwd=worktree_path)
+            # --3way: fall back to three-way merge when hunk offsets are wrong
+            # --ignore-whitespace: tolerate whitespace drift
+            _run(["git", "apply", "--3way", "--ignore-whitespace", "--index", tmp],
+                 cwd=worktree_path)
         finally:
             os.unlink(tmp)
 

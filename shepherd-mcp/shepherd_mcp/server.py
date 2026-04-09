@@ -156,16 +156,17 @@ def _parse_files(response: str) -> dict[str, str]:
     """
     Parse the drone's response into a dict of {relative_path: content}.
 
-    Expected format per file:
-        ### FILE: path/to/file.ext
-        ```
-        <content>
-        ```
+    Accepts two header formats:
+        ### FILE: path/to/file.ext    (preferred)
+        ### path/to/file.ext          (also accepted — drones often omit "FILE:")
+
+    Both must be followed by a fenced code block.
     """
     import re
     files: dict[str, str] = {}
+    # Match both "### FILE: path" and "### path" (where path contains a '/' or '.')
     pattern = re.compile(
-        r"###\s*FILE:\s*(.+?)\n```(?:\w+)?\n(.*?)```",
+        r"###\s*(?:FILE:\s*)?([^\n]+?\.[^\n]+?)\n```(?:\w+)?\n(.*?)```",
         re.DOTALL,
     )
     for match in pattern.finditer(response):

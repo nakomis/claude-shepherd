@@ -185,18 +185,20 @@ def _parse_response(response: str) -> tuple[dict[str, str], list[str]]:
     import re
     files: dict[str, str] = {}
     patches: list[str] = []
-    pattern = re.compile(
-        r"###\s*(PATCH|FILE)?:?\s*([^\n]+?\.[^\n]+?)\n```(?:\w+)?\n(.*?)```",
-        re.DOTALL,
-    )
-    for match in pattern.finditer(response):
-        kind = (match.group(1) or "FILE").upper()
-        path = match.group(2).strip()
-        content = match.group(3)
-        if kind == "PATCH":
-            patches.append(content)
-        else:
-            files[path] = content
+    BLOCK = r"```[^\n]*\n(.*?)```"
+
+    # PATCH blocks — explicit keyword required, path captured separately
+    patch_spans: set[tuple[int, int]] = set()
+    for m in re.finditer(r"###\s*PATCH:\s*([^\n]+)\n" + BLOCK, response, re.DOTALL):
+        patches.append(m.group(2))
+        patch_spans.add((m.start(), m.end()))
+
+    # FILE blocks — keyword optional (legacy drones omit it); skip any PATCH span
+    for m in re.finditer(r"###\s*(?:FILE:\s*)?([^\n]+?\.[^\n]+?)\n" + BLOCK, response, re.DOTALL):
+        if any(m.start() >= s and m.end() <= e for s, e in patch_spans):
+            continue
+        path = m.group(1).strip()
+        files[path] = m.group(2)
     return files, patches
 
 

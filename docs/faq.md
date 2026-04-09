@@ -1,5 +1,13 @@
 # Known-Errors FAQ
 
+## shepherd-mcp internals
+
+- `store` is a `JobStore` instance — it has `.all()` (returns `list[DroneJob]`) and `.get(job_id)`. It does NOT have `.values()`, `.items()`, or support `len()`. Use `len(store.all())` not `len(store)`.
+- Every MCP tool function must have `@mcp.tool()` immediately above the `def` line. A function without this decorator will not be registered and Claude will never see it.
+- Do not output a complete modified file when only adding a function — stub out the existing context. Instead output only the new function or the new file.
+
+
+
 Prepended to every drone system prompt. Each rule here eliminates a class of error before compilation runs.
 
 Rules are seeded from the nakomis-scrum project drone correction taxonomy. Add new rules whenever a drone error reaches the Claude gate — tag with the project and date.

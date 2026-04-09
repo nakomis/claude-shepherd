@@ -9,7 +9,7 @@ def register(mcp: FastMCP) -> None:
         fragments = spec_library.get_fragments(project_path)
         if not fragments:
             return "No fragments."
-        return json.dumps([{"name": frag.name, "content": frag.content} for frag in fragments])
+        return json.dumps([{"name": k, "content": v} for k, v in fragments.items()])
 
     @mcp.tool()
     def spec_fragment_add(project_path: str, name: str, content: str) -> str:

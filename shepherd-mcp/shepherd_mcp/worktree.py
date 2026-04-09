@@ -44,21 +44,24 @@ def write_and_commit(worktree_path: str, files: dict[str, str], message: str) ->
     _run(["git", "commit", "-m", message], cwd=worktree_path)
 
 
-def apply_patches(worktree_path: str, patches: list[str]) -> None:
-    """Apply a list of unified diff patches to the worktree via `git apply`."""
-    import tempfile, os
-    for patch_text in patches:
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".patch",
-                                        delete=False, encoding="utf-8") as f:
-            f.write(patch_text)
-            tmp = f.name
-        try:
-            # --3way: fall back to three-way merge when hunk offsets are wrong
-            # --ignore-whitespace: tolerate whitespace drift
-            _run(["git", "apply", "--3way", "--ignore-whitespace", "--index", tmp],
-                 cwd=worktree_path)
-        finally:
-            os.unlink(tmp)
+def apply_patches(worktree_path: str, patches: list[tuple[str, str, str]]) -> None:
+    """
+    Apply FIND/REPLACE patches to files in the worktree.
+
+    Each patch is a tuple of (relative_path, find_text, replace_text).
+    Raises RuntimeError if the find_text is not present in the target file.
+    """
+    root = Path(worktree_path)
+    for rel_path, find_text, replace_text in patches:
+        file_path = root / rel_path
+        if not file_path.exists():
+            raise RuntimeError(f"PATCH target not found: {rel_path}")
+        content = file_path.read_text(encoding="utf-8")
+        if find_text not in content:
+            raise RuntimeError(
+                f"FIND text not found in {rel_path}.\n\nExpected to find:\n{find_text!r}"
+            )
+        file_path.write_text(content.replace(find_text, replace_text, 1), encoding="utf-8")
 
 
 def _run(cmd: list[str], cwd: str) -> subprocess.CompletedProcess:

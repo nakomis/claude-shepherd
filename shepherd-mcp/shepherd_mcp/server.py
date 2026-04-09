@@ -77,11 +77,15 @@ def _run_pipeline_inner(job_id: str) -> None:
         "```\n"
         "<full file content>\n"
         "```\n\n"
-        "For a MODIFICATION to an existing file, output a unified diff patch:\n"
+        "For a MODIFICATION to an existing file, use FIND/REPLACE format — no line numbers needed:\n"
         "### PATCH: <relative/path/to/file.ext>\n"
-        "```diff\n"
-        "<unified diff — must include enough context lines for `git apply` to locate the hunk>\n"
+        "```\n"
+        "FIND:\n"
+        "<exact lines to find, copied verbatim from the file>\n"
+        "REPLACE:\n"
+        "<exact lines to replace them with>\n"
         "```\n\n"
+        "You may include multiple FIND:/REPLACE: pairs in one PATCH block for multiple changes.\n"
         "Do not include explanations outside of code comments. "
         "Never output a complete file when a patch is sufficient."
     )
@@ -154,8 +158,8 @@ def _run_pipeline_inner(job_id: str) -> None:
                         f"{prompt}\n\n"
                         f"# Patch application error (round {round_num + 1})\n\n"
                         f"```\n{patch_error}\n```\n\n"
-                        "The patch could not be applied. Output a corrected PATCH with valid unified diff format "
-                        "and enough context lines for `git apply` to locate the hunk."
+                        "The patch could not be applied. Output a corrected PATCH block using FIND:/REPLACE: format. "
+                        "Copy the FIND: text exactly as it appears in the file — do not paraphrase."
                     )
                     continue
             job.status = JobStatus.COMPILING
@@ -201,30 +205,38 @@ def _run_pipeline_inner(job_id: str) -> None:
                      total_completion_tokens=job.completion_tokens)
 
 
-def _parse_response(response: str) -> tuple[dict[str, str], list[str]]:
+def _parse_response(response: str) -> tuple[dict[str, str], list[tuple[str, str, str]]]:
     """
-    Parse the drone's response into full files and unified diff patches.
+    Parse the drone's response into full files and FIND/REPLACE patches.
 
     Recognised header formats:
         ### FILE: path/to/file.ext    — full file (new or replacement)
-        ### PATCH: path/to/file.ext   — unified diff, applied via `git apply`
+        ### PATCH: path/to/file.ext   — FIND:/REPLACE: block, no line numbers needed
         ### path/to/file.ext          — treated as FILE (legacy, drones often omit the keyword)
 
-    Both must be followed by a fenced code block.
     Returns (files, patches) where:
         files   = {relative_path: full_content}
-        patches = [raw_unified_diff_string, ...]
+        patches = [(relative_path, find_text, replace_text), ...]
     """
     import re
     files: dict[str, str] = {}
-    patches: list[str] = []
+    patches: list[tuple[str, str, str]] = []
     BLOCK = r"```[^\n]*\n(.*?)```"
 
-    # PATCH blocks — explicit keyword required, path captured separately
+    # PATCH blocks — parse FIND:/REPLACE: pairs from each block
     patch_spans: set[tuple[int, int]] = set()
+    pair_re = re.compile(
+        r"^FIND:\n(.*?)^REPLACE:\n(.*?)(?=^FIND:|\Z)",
+        re.MULTILINE | re.DOTALL,
+    )
     for m in re.finditer(r"###\s*PATCH:\s*([^\n]+)\n" + BLOCK, response, re.DOTALL):
-        patches.append(m.group(2))
+        path = m.group(1).strip()
+        block = m.group(2)
         patch_spans.add((m.start(), m.end()))
+        for pair in pair_re.finditer(block):
+            find_text = pair.group(1).rstrip("\n")
+            replace_text = pair.group(2).rstrip("\n")
+            patches.append((path, find_text, replace_text))
 
     # FILE blocks — keyword optional (legacy drones omit it); skip any PATCH span
     for m in re.finditer(r"###\s*(?:FILE:\s*)?([^\n]+?\.[^\n]+?)\n" + BLOCK, response, re.DOTALL):
@@ -298,7 +310,7 @@ def drone_status(job_id: str) -> str:
 
 
 @mcp.tool()
-def drone_wait(job_id: str, timeout: int = 600) -> str:
+def drone_wait(job_id: str, timeout: int = 1800) -> str:
     """
     Block until a drone job reaches 'ready' or 'failed', then return its status.
 

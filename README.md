@@ -2,6 +2,8 @@
 
 A framework for orchestrating drone LLMs (Ollama, Bedrock, OpenAI, Gemini) under Claude's supervision to generate code cheaply, with Claude acting as architect, gatekeeper, and reviewer.
 
+## Support
+
 If you find this useful, please consider buying me a coffee:
 
 [![Donate with PayPal](https://www.paypalobjects.com/en_GB/i/btn/btn_donate_SM.gif)](https://www.paypal.com/donate?hosted_button_id=Q3BESC73EWVNN)
@@ -58,7 +60,7 @@ Providers are pluggable per-job — you can mix within a session.
 
 CC0 — public domain. No rights reserved.
 
----
+## Support
 
 If you find this useful, please consider buying me a coffee:
 

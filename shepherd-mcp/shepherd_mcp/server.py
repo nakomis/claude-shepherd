@@ -14,7 +14,7 @@ from mcp.server.fastmcp import FastMCP
 
 from .jobs import store, JobStatus
 from .providers.ollama import OllamaProvider
-from . import worktree, compile, faq
+from . import worktree, compile, faq, drone_log
 
 mcp = FastMCP("shepherd-mcp")
 
@@ -67,29 +67,43 @@ def _run_pipeline(job_id: str) -> None:
     if job.feedback:
         prompt = f"{job.spec}\n\n# Reviewer feedback\n\n{job.feedback}"
 
+    drone_log.append(job_id, "pipeline_start",
+                     model=job.model, project_path=job.project_path,
+                     worktree=job.worktree_path, system_prompt=system, spec=prompt)
+
     for round_num in range(MAX_CORRECTION_ROUNDS + 1):
         # Generate
         job.status = JobStatus.GENERATING if round_num == 0 else JobStatus.CORRECTING
         job.correction_rounds = round_num
+
+        drone_log.append(job_id, "generate_start", round=round_num, prompt=prompt)
 
         try:
             result = provider.generate(prompt, system, model_name)
         except Exception as exc:
             job.status = JobStatus.FAILED
             job.failure_reason = f"Provider error: {exc}"
+            drone_log.append(job_id, "provider_error", error=str(exc))
             return
 
         job.prompt_tokens += result.prompt_tokens
         job.completion_tokens += result.completion_tokens
+
+        drone_log.append(job_id, "generate_complete", round=round_num,
+                         prompt_tokens=result.prompt_tokens,
+                         completion_tokens=result.completion_tokens,
+                         response=result.response)
 
         # Parse files from response
         files = _parse_files(result.response)
         if not files:
             job.status = JobStatus.FAILED
             job.failure_reason = "Drone response contained no parseable files."
+            drone_log.append(job_id, "parse_failed", response=result.response)
             return
 
         job.files = files
+        drone_log.append(job_id, "files_parsed", files=list(files.keys()))
 
         # Write to worktree, commit, and compile
         if job.worktree_path:
@@ -98,9 +112,16 @@ def _run_pipeline(job_id: str) -> None:
             job.status = JobStatus.COMPILING
             compile_result = compile.run(job.worktree_path)
 
+            drone_log.append(job_id, "compile", round=round_num,
+                             success=compile_result.success, output=compile_result.output)
+
             if compile_result.success:
                 job.status = JobStatus.READY
                 job.errors = []
+                drone_log.append(job_id, "pipeline_complete",
+                                 correction_rounds=round_num,
+                                 total_prompt_tokens=job.prompt_tokens,
+                                 total_completion_tokens=job.completion_tokens)
                 return
 
             if round_num >= MAX_CORRECTION_ROUNDS:
@@ -117,12 +138,18 @@ def _run_pipeline(job_id: str) -> None:
         else:
             # No worktree — just mark ready (compile gate skipped)
             job.status = JobStatus.READY
+            drone_log.append(job_id, "pipeline_complete_no_compile",
+                             total_prompt_tokens=job.prompt_tokens,
+                             total_completion_tokens=job.completion_tokens)
             return
 
     job.status = JobStatus.FAILED
     job.failure_reason = (
         f"Compile gate still failing after {MAX_CORRECTION_ROUNDS} correction rounds."
     )
+    drone_log.append(job_id, "pipeline_failed", reason=job.failure_reason,
+                     total_prompt_tokens=job.prompt_tokens,
+                     total_completion_tokens=job.completion_tokens)
 
 
 def _parse_files(response: str) -> dict[str, str]:

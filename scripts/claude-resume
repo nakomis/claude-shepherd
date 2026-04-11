@@ -1,0 +1,113 @@
+#!/usr/bin/env bash
+# claude-resume — wait for the 5-hour rate limit to reset, then resume a named session.
+#
+# Usage:
+#   claude-resume SESSION_NAME [MESSAGE]
+#
+# SESSION_NAME  — the name passed to claude --name when the session was started
+# MESSAGE       — text to inject after resuming (default: "Please continue.")
+#
+# Rate limit state is read from ~/.claude/rate-limit-state.json, which is written
+# by scripts/rate-limit-statusline.sh on every statusline tick whilst Claude Code
+# is active. If no (or stale) state file exists, the script polls every 10 minutes
+# using a test invocation until the session recovers.
+#
+# Requires: expect (installed on macOS by default)
+
+set -euo pipefail
+
+STATE_FILE="${HOME}/.claude/rate-limit-state.json"
+POLL_INTERVAL=600   # seconds between polling attempts when no state file
+STALE_AFTER=3600    # treat state file as stale if older than this many seconds
+BUFFER=60           # seconds to add past resets_at before attempting resume
+
+session="${1:-}"
+message="${2:-Please continue.}"
+
+if [[ -z "$session" ]]; then
+    echo "Usage: claude-resume SESSION_NAME [MESSAGE]" >&2
+    echo "" >&2
+    echo "SESSION_NAME is the --name you gave when starting the session." >&2
+    echo "Start sessions with: claude --name my-session" >&2
+    exit 1
+fi
+
+# ── helpers ────────────────────────────────────────────────────────────────────
+
+log() { echo "[claude-resume] $*" >&2; }
+
+now() { date +%s; }
+
+resume_session() {
+    log "Resuming session '${session}' with message: ${message}"
+    expect -c "
+        set timeout 60
+        spawn claude --resume [list ${session}]
+        expect -re {[>#❯\$]}
+        send [list ${message}]\r
+        interact
+    "
+}
+
+# ── main ───────────────────────────────────────────────────────────────────────
+
+log "Waiting to resume session: '${session}'"
+
+resets_at=""
+
+# Try to read resets_at from the state file written by the statusline script
+if [[ -f "$STATE_FILE" ]]; then
+    written_at=$(jq -r '.written_at // 0' "$STATE_FILE" 2>/dev/null || echo 0)
+    age=$(( $(now) - written_at ))
+
+    if [[ $age -lt $STALE_AFTER ]]; then
+        resets_at=$(jq -r '.five_hour.resets_at // empty' "$STATE_FILE" 2>/dev/null || true)
+        pct=$(jq -r '.five_hour.used_percentage // "?"' "$STATE_FILE" 2>/dev/null || echo "?")
+        log "Rate limit state: ${pct}% used, resets at $(date -r "${resets_at}" 2>/dev/null || echo "${resets_at}")"
+    else
+        log "State file is stale (${age}s old) — falling back to polling."
+    fi
+else
+    log "No state file found at ${STATE_FILE} — falling back to polling."
+    log "Tip: install scripts/rate-limit-statusline.sh as your Claude Code statusline script."
+fi
+
+# ── sleep until resets_at ──────────────────────────────────────────────────────
+
+if [[ -n "$resets_at" ]] && [[ "$resets_at" =~ ^[0-9]+$ ]]; then
+    target=$(( resets_at + BUFFER ))
+    remaining=$(( target - $(now) ))
+
+    if [[ $remaining -gt 0 ]]; then
+        wake_time=$(date -r "$target" '+%H:%M:%S' 2>/dev/null || date -d "@${target}" '+%H:%M:%S' 2>/dev/null || echo "unknown")
+        log "Sleeping ${remaining}s — will attempt resume at ${wake_time}."
+        sleep "$remaining"
+    else
+        log "resets_at is in the past — attempting resume immediately."
+    fi
+else
+    # Fallback: poll every POLL_INTERVAL seconds
+    log "Polling every ${POLL_INTERVAL}s until rate limit clears..."
+    while true; do
+        next=$(date -v "+${POLL_INTERVAL}S" '+%H:%M:%S' 2>/dev/null \
+               || date -d "+${POLL_INTERVAL} seconds" '+%H:%M:%S' 2>/dev/null \
+               || echo "unknown")
+        log "Not yet — next attempt at ${next}."
+        sleep "$POLL_INTERVAL"
+
+        # Re-check the state file — may have been written since we started
+        if [[ -f "$STATE_FILE" ]]; then
+            written_at=$(jq -r '.written_at // 0' "$STATE_FILE" 2>/dev/null || echo 0)
+            age=$(( $(now) - written_at ))
+            if [[ $age -lt $STALE_AFTER ]]; then
+                resets_at=$(jq -r '.five_hour.resets_at // empty' "$STATE_FILE" 2>/dev/null || true)
+                if [[ -n "$resets_at" ]] && [[ $(now) -ge $(( resets_at + BUFFER )) ]]; then
+                    log "Rate limit has reset (resets_at is in the past)."
+                    break
+                fi
+            fi
+        fi
+    done
+fi
+
+resume_session

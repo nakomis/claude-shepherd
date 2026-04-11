@@ -48,3 +48,17 @@ Rules are seeded from the nakomis-scrum project drone correction taxonomy. Add n
 ## WebSocket / TypeScript types
 
 - `event.queryStringParameters` is not typed on `APIGatewayProxyWebsocketHandlerV2`. Cast with `(event as any).queryStringParameters` until `@types/aws-lambda` catches up.
+
+
+## Output format: FILE vs PATCH
+
+- Use `### FILE: path` only for **new files** or deliberate **complete rewrites**.
+- Use `### PATCH: path` for **modifications to existing files**. Output a unified diff with sufficient context lines (3+) for `git apply` to locate the hunk.
+- Never output a complete file when only adding or changing a function — the pipeline will overwrite the whole file and destroy any functions not in your context window.
+- `### PATCH:` blocks must contain a valid unified diff (starting with `--- a/...` / `+++ b/...` headers). Do not output the raw new content inside a PATCH block.
+
+
+PATCH paths must be relative to the repository root, not the Python package root. If the project is a monorepo with a subdirectory (e.g. shepherd-mcp/), the PATCH header must include that subdirectory prefix. Example: use `shepherd-mcp/shepherd_mcp/compile.py`, not `shepherd_mcp/compile.py`. When in doubt, always check the spec for the full path from the repo root.
+
+
+When writing PATCH FIND text to insert between two top-level Python functions, use exactly two blank lines (three newlines) between them — this is PEP 8 convention and what the file will contain. Using one blank line (two newlines) will cause FIND text not found errors. Example: the boundary between `drone_result` and `drone_approve` is `    }, indent=2)\n\n\n@mcp.tool()\ndef drone_approve`.

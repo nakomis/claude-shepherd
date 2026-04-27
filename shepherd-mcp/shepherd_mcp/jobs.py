@@ -33,6 +33,7 @@ class DroneJob:
     review_notes: Optional[str] = None
     failure_reason: Optional[str] = None
     feedback: Optional[str] = None                             # set on reject
+    started_at: Optional[float] = None                         # Unix timestamp, set when pipeline starts
 
 
 class JobStore:

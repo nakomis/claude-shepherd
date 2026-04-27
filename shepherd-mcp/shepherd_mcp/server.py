@@ -15,12 +15,13 @@ from mcp.server.fastmcp import FastMCP
 
 from .jobs import store, JobStatus
 from .providers.ollama import OllamaProvider
-from . import worktree, compile, faq, drone_log, faq_tools, spec_library, spec_library_tools, failure_archive, failure_archive_tools
+from . import worktree, compile, faq, drone_log, faq_tools, spec_library, spec_library_tools, failure_archive, failure_archive_tools, job_history, job_history_tools
 
 mcp = FastMCP("shepherd-mcp")
 faq_tools.register(mcp)
 spec_library_tools.register(mcp)
 failure_archive_tools.register(mcp)
+job_history_tools.register(mcp)
 
 MAX_CORRECTION_ROUNDS = 3
 
@@ -49,7 +50,7 @@ def _resolve_provider(model: str):
 
 
 def _archive_failure(job) -> None:
-    """Write a failed job to the failure archive (best-effort; never raises)."""
+    """Write a failed job to the failure archive and job history (best-effort; never raises)."""
     try:
         failure_archive.log_failure(
             project_path=job.project_path,
@@ -63,7 +64,21 @@ def _archive_failure(job) -> None:
             completion_tokens=job.completion_tokens,
         )
     except Exception:
-        pass  # archiving must never crash the pipeline
+        pass
+    try:
+        job_history.log_job(
+            project_path=job.project_path,
+            job_id=job.job_id,
+            model=job.model,
+            outcome="failed",
+            failure_reason=job.failure_reason,
+            correction_rounds=job.correction_rounds,
+            started_at=job.started_at,
+            prompt_tokens=job.prompt_tokens,
+            completion_tokens=job.completion_tokens,
+        )
+    except Exception:
+        pass  # history must never crash the pipeline
 
 
 def _run_pipeline(job_id: str) -> None:
@@ -94,7 +109,9 @@ def _is_qwen3(model_name: str) -> bool:
 
 
 def _run_pipeline_inner(job_id: str) -> None:
+    import time
     job = store.get(job_id)
+    job.started_at = time.time()
     provider, model_name = _resolve_provider(job.model)
 
     no_think_prefix = "/no_think\n\n" if _is_qwen3(model_name) else ""
@@ -207,6 +224,20 @@ def _run_pipeline_inner(job_id: str) -> None:
                                  correction_rounds=round_num,
                                  total_prompt_tokens=job.prompt_tokens,
                                  total_completion_tokens=job.completion_tokens)
+                try:
+                    job_history.log_job(
+                        project_path=job.project_path,
+                        job_id=job.job_id,
+                        model=job.model,
+                        outcome="success",
+                        failure_reason=None,
+                        correction_rounds=round_num,
+                        started_at=job.started_at,
+                        prompt_tokens=job.prompt_tokens,
+                        completion_tokens=job.completion_tokens,
+                    )
+                except Exception:
+                    pass
                 return
 
             if round_num >= MAX_CORRECTION_ROUNDS:
@@ -226,6 +257,20 @@ def _run_pipeline_inner(job_id: str) -> None:
             drone_log.append(job_id, "pipeline_complete_no_compile",
                              total_prompt_tokens=job.prompt_tokens,
                              total_completion_tokens=job.completion_tokens)
+            try:
+                job_history.log_job(
+                    project_path=job.project_path,
+                    job_id=job.job_id,
+                    model=job.model,
+                    outcome="success",
+                    failure_reason=None,
+                    correction_rounds=round_num,
+                    started_at=job.started_at,
+                    prompt_tokens=job.prompt_tokens,
+                    completion_tokens=job.completion_tokens,
+                )
+            except Exception:
+                pass
             return
 
     job.status = JobStatus.FAILED

@@ -34,13 +34,18 @@ Always run the compile gate before escalating to the Claude gate. Compilation ca
 
 Each drone job runs in a dedicated git worktree. Never write drone output directly to the working tree — always via `drone_approve` after the full pipeline passes.
 
+## Agent role model
+
+Shepherd uses a formal role model — Architect, Business, Project Manager, Engineering, QA, CI — each mapped to a specific agent tier and escalation path. See [`docs/architecture/roles.md`](docs/architecture/roles.md).
+
 ## Repo layout
 
 ```
-shepherd-mcp/     Python MCP server
-skills/           Claude Code slash command definitions
-.claude/agents/   Custom agent definitions
-docs/             Pipeline design, spec format, FAQ
+shepherd-mcp/            Python MCP server
+skills/                  Claude Code slash command definitions
+.claude/agents/          Custom agent definitions
+docs/                    Pipeline design, spec format, FAQ
+docs/architecture/       Architecture design documents
 ```
 
 ## Branching

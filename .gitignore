@@ -5,4 +5,6 @@ __pycache__/
 dist/
 .shepherd-worktrees/
 ignored/
+
+# Planning
 PLAN.md

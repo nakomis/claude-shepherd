@@ -20,7 +20,8 @@ Claude Shepherd is structured around a formal role model that mirrors how good s
 The Architect role is collaborative — Martin drives requirements and final decisions; Claude provides system design, identifies risks, and writes Taiga stories with enough detail for the PM to act on them autonomously.
 
 **Responsibilities:**
-- Decompose work into epics and stories with clear acceptance criteria
+- Decompose work into epics and stories with clear acceptance criteria (where appropriate)
+- Write acceptance criteria in stories in a form QA can assess — specific, observable, not ambiguous
 - Set `is_blocked` / `blocked_note` on stories that have dependencies
 - Write or review specs tight enough for drones to generate against
 - Resolve ambiguities before they reach Engineering
@@ -79,6 +80,7 @@ The QA reviewer is a Claude subagent with a focused, isolated context — it see
 - Verify correctness: logic matches `description`; all `constraints` satisfied
 - Verify project conventions: imports match `dependencies`; no extras
 - Verify scope: no unprompted additions unless harmless
+- Assess story acceptance criteria (where present) and confirm they have been met
 
 **Escalation:** If QA rejects the same job N times, escalate to Martin rather than looping further.
 

@@ -1,14 +1,5 @@
-import { APIGatewayProxyEvent, APIGatewayProxyResult } from 'aws-lambda';
-
-export const handler = async (event: APIGatewayProxyEvent): Promise<APIGatewayProxyResult> => {
-  console.log('Received event:', JSON.stringify(event));
-
-  return {
-    statusCode: 200,
-    body: JSON.stringify({
-      ...event,
-      approved: true,
-      review_notes: 'stub — always approves',
-    }),
-  };
+// TODO (SHEP-34): invoke normalisation layer → reviewer model
+export const handler = async (event: Record<string, unknown>): Promise<Record<string, unknown>> => {
+  console.log('review invoked:', JSON.stringify(event));
+  return { ...event, approved: true, review_notes: 'stub — always approves' };
 };

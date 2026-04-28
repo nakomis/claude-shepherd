@@ -1,13 +1,5 @@
-import { APIGatewayProxyEvent, APIGatewayProxyResult } from 'aws-lambda';
-
-export const handler = async (event: APIGatewayProxyEvent): Promise<APIGatewayProxyResult> => {
-  console.log('Received event:', JSON.stringify(event));
-
-  return {
-    statusCode: 200,
-    body: JSON.stringify({
-      success: true,
-      message: 'stub — merge not yet implemented',
-    }),
-  };
+// TODO: call GitHub API to merge the generated branch
+export const handler = async (event: Record<string, unknown>): Promise<Record<string, unknown>> => {
+  console.log('merge invoked:', JSON.stringify(event));
+  return { success: true, message: 'stub — merge not yet implemented' };
 };

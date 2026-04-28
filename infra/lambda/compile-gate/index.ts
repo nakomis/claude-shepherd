@@ -1,13 +1,5 @@
-import { APIGatewayProxyEvent, APIGatewayProxyResult } from 'aws-lambda';
-
-export const handler = async (event: APIGatewayProxyEvent): Promise<APIGatewayProxyResult> => {
-  console.log('Received event:', JSON.stringify(event));
-
-  return {
-    statusCode: 200,
-    body: JSON.stringify({
-      ...event,
-      compile_passed: true,
-    }),
-  };
+// TODO: push branch to GitHub, trigger compile-check.yml via workflow_dispatch, poll for result
+export const handler = async (event: Record<string, unknown>): Promise<Record<string, unknown>> => {
+  console.log('compile-gate invoked:', JSON.stringify(event));
+  return { ...event, compile_passed: true };
 };

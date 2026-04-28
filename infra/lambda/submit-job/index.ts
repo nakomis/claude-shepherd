@@ -1,9 +1,9 @@
 import { APIGatewayProxyEvent, APIGatewayProxyResult } from 'aws-lambda';
-import { DynamoDBDocumentClient, PutCommand } from '@aws-sdk/lib-dynamodb';
+import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
+import { DynamoDBDocumentClient, PutCommand, GetCommand } from '@aws-sdk/lib-dynamodb';
 import { SFNClient, StartExecutionCommand } from '@aws-sdk/client-sfn';
-import crypto from 'crypto';
 
-const ddb = DynamoDBDocumentClient.from({
+const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({}), {
   marshallOptions: { removeUndefinedValues: true },
   unmarshallOptions: { wrapNumbers: false },
 });
@@ -15,38 +15,22 @@ export const handler = async (event: APIGatewayProxyEvent): Promise<APIGatewayPr
       const body = JSON.parse(event.body || '{}');
       const { spec, model, project_path } = body;
       const job_id = crypto.randomUUID();
-      const createdAt = new Date().toISOString();
-      const updatedAt = new Date().toISOString();
+      const now = new Date().toISOString();
 
       await ddb.send(new PutCommand({
         TableName: process.env.JOBS_TABLE_NAME,
-        Item: {
-          job_id,
-          status: 'pending',
-          spec,
-          model,
-          project_path,
-          created_at: createdAt,
-          updated_at: updatedAt,
-        },
+        Item: { job_id, status: 'pending', spec, model, project_path, created_at: now, updated_at: now },
       }));
 
-      const input = JSON.stringify({ job_id, spec, model, project_path, correction_rounds: 0 });
       await sfnClient.send(new StartExecutionCommand({
         stateMachineArn: process.env.STATE_MACHINE_ARN,
-        input,
+        input: JSON.stringify({ job_id, spec, model, project_path, correction_rounds: 0 }),
       }));
 
-      return {
-        statusCode: 202,
-        body: JSON.stringify({ job_id }),
-      };
+      return { statusCode: 202, body: JSON.stringify({ job_id }) };
     } catch (error) {
       console.error('Error submitting job:', error);
-      return {
-        statusCode: 500,
-        body: JSON.stringify({ error: 'Internal Server Error' }),
-      };
+      return { statusCode: 500, body: JSON.stringify({ error: 'Internal Server Error' }) };
     }
   }
 
@@ -54,10 +38,7 @@ export const handler = async (event: APIGatewayProxyEvent): Promise<APIGatewayPr
     try {
       const job_id = event.pathParameters?.job_id;
       if (!job_id) {
-        return {
-          statusCode: 400,
-          body: JSON.stringify({ error: 'Missing job_id' }),
-        };
+        return { statusCode: 400, body: JSON.stringify({ error: 'Missing job_id' }) };
       }
 
       const result = await ddb.send(new GetCommand({
@@ -66,27 +47,15 @@ export const handler = async (event: APIGatewayProxyEvent): Promise<APIGatewayPr
       }));
 
       if (!result.Item) {
-        return {
-          statusCode: 404,
-          body: JSON.stringify({ error: 'Job not found' }),
-        };
+        return { statusCode: 404, body: JSON.stringify({ error: 'Job not found' }) };
       }
 
-      return {
-        statusCode: 200,
-        body: JSON.stringify(result.Item),
-      };
+      return { statusCode: 200, body: JSON.stringify(result.Item) };
     } catch (error) {
       console.error('Error getting job:', error);
-      return {
-        statusCode: 500,
-        body: JSON.stringify({ error: 'Internal Server Error' }),
-      };
+      return { statusCode: 500, body: JSON.stringify({ error: 'Internal Server Error' }) };
     }
   }
 
-  return {
-    statusCode: 405,
-    body: JSON.stringify({ error: 'Method Not Allowed' }),
-  };
+  return { statusCode: 405, body: JSON.stringify({ error: 'Method Not Allowed' }) };
 };

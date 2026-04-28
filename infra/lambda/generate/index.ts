@@ -1,13 +1,5 @@
-import { APIGatewayProxyEvent, APIGatewayProxyResult } from 'aws-lambda';
-
-export const handler = async (event: APIGatewayProxyEvent): Promise<APIGatewayProxyResult> => {
-  console.log('Received event:', JSON.stringify(event));
-
-  return {
-    statusCode: 200,
-    body: JSON.stringify({
-      ...event,
-      generated_files: {},
-    }),
-  };
+// TODO (SHEP-34): invoke normalisation layer → model provider
+export const handler = async (event: Record<string, unknown>): Promise<Record<string, unknown>> => {
+  console.log('generate invoked:', JSON.stringify(event));
+  return { ...event, generated_files: {} };
 };

@@ -6,5 +6,9 @@ dist/
 .shepherd-worktrees/
 ignored/
 
+# Claude Code local state
+.claude/settings.local.json
+.claude/worktrees/
+
 # Planning
 PLAN.md

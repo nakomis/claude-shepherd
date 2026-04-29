@@ -1,0 +1,41 @@
+name: Drone compile check
+
+# Triggered by the compile-gate Lambda for each drone-generated branch.
+# Runs the same checks as the main CI but against a specific branch.
+on:
+  workflow_dispatch:
+    inputs:
+      branch_name:
+        description: Branch to check (shepherd/{job_id})
+        required: true
+        type: string
+
+jobs:
+  compile-check:
+    name: Compile gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.branch_name }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - uses: astral-sh/setup-uv@v5
+
+      - name: Install dependencies
+        working-directory: shepherd-mcp
+        run: uv sync --group dev
+
+      - name: Run tests
+        working-directory: shepherd-mcp
+        run: uv run pytest
+
+      - name: CDK TypeScript build
+        if: hashFiles('infra/package.json') != ''
+        working-directory: infra
+        run: |
+          npm ci
+          npm run build

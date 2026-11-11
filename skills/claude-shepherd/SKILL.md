@@ -12,7 +12,22 @@ Claude writes the spec and reviews the output; the drone does the cheap generati
 
 ---
 
-## Step 0 — Is this task drone-appropriate?
+## Step 0 — Mine conversation-memory for context
+
+Before writing the spec, search the `conversation-memory` sub-MCP (via `meta-mcp`) for prior sessions on this task.
+
+**If there is a Plane (or older Taiga) ticket:**
+1. Search for the ticket ref first (e.g. `BCON-42`) — this reliably surfaces the session where the story was created.
+2. Also search for `BLOG-PLANE-CREATED: BCON-42` (or `BLOG-TAIGA-CREATED: BCON-42` for stories created before 14 Sep 2026) if it's a blog-post story, to pull the exact session with full context.
+
+**If there is no ticket:**
+- Search by topic keywords — project name, function name, whatever is most specific.
+
+The conversation-memory archive often contains the full design rationale, mistakes made, and decisions taken in previous sessions. A thorough Taiga story is good; the raw conversation is frequently better. Read what comes back before writing the spec — it will save rejection cycles.
+
+---
+
+## Step 0.5 — Is this task drone-appropriate?
 
 Use drones when:
 - Generating one or more complete files that follow an established pattern in the codebase
